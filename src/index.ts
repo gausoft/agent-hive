@@ -12,13 +12,17 @@ import eventsRoute from "./routes/events.js";
 import githubRoute from "./routes/github.js";
 import userRoute from "./routes/user.js";
 import tasksRoute from "./routes/tasks.js";
+import schedulesRoute from "./routes/schedules.js";
 import { validateToken, hasAnyToken } from "./auth.js";
 import { initStore } from "./core/store.js";
+import { startScheduler } from "./core/scheduler.js";
 
 dotenv.config();
 
 // Open the durable task store (creates the SQLite schema on first run).
 initStore();
+// Start the recurring-task scheduler (minute resolution).
+startScheduler();
 
 // Token validation is centralized in ./auth.ts (shared by HTTP + WebSocket auth)
 if (!hasAnyToken()) {
@@ -29,6 +33,25 @@ if (!hasAnyToken()) {
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
 const app = Fastify({ logger: true });
+
+// Tolerate an empty JSON body (e.g. bodyless DELETE or POST with no payload)
+// instead of failing with FST_ERR_CTP_EMPTY_JSON_BODY when clients still send
+// a `Content-Type: application/json` header.
+app.addContentTypeParser(
+  "application/json",
+  { parseAs: "string" },
+  (_req, body, done) => {
+    if (!body || (body as string).trim() === "") {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  }
+);
 
 // Auth middleware — skip public paths, store user on request
 app.addHook("onRequest", async (req, reply) => {
@@ -92,6 +115,7 @@ app.register(eventsRoute);
 app.register(githubRoute);
 app.register(userRoute);
 app.register(tasksRoute);
+app.register(schedulesRoute);
 
 app.get("/health", async () => ({
   status: "ok",

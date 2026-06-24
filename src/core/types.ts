@@ -41,3 +41,29 @@ export interface TaskEvent {
   type: string;
   payload: unknown;
 }
+
+/** A recurring task definition (replaces a separate cron/prq tool). */
+export interface Schedule {
+  id: string;
+  prompt: string;
+  repo: string | null;
+  branch: string | null;
+  model: string | null;
+  provider: string | null;
+  /** Recurrence spec: "@every <n>(s|m|h|d)" or "@daily HH:MM" (local time). */
+  spec: string;
+  enabled: boolean;
+  lastRunAt: number | null;
+  nextRunAt: number | null;
+  createdAt: number;
+}
+
+export interface ScheduleInput {
+  prompt: string;
+  spec: string;
+  repo?: string | null;
+  branch?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  enabled?: boolean;
+}

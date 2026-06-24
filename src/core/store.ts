@@ -10,7 +10,14 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Task, TaskEvent, TaskInput, TaskStatus } from "./types.js";
+import type {
+  Task,
+  TaskEvent,
+  TaskInput,
+  TaskStatus,
+  Schedule,
+  ScheduleInput,
+} from "./types.js";
 
 let db: DatabaseSync | null = null;
 
@@ -43,6 +50,22 @@ CREATE TABLE IF NOT EXISTS task_events (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
 CREATE INDEX IF NOT EXISTS idx_events_task ON task_events (task_id, id);
+
+CREATE TABLE IF NOT EXISTS schedules (
+  id          TEXT PRIMARY KEY,
+  prompt      TEXT NOT NULL,
+  repo        TEXT,
+  branch      TEXT,
+  model       TEXT,
+  provider    TEXT,
+  spec        TEXT NOT NULL,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  last_run_at INTEGER,
+  next_run_at INTEGER,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sched_due ON schedules (enabled, next_run_at);
 `;
 
 /** Open the database (idempotent) and ensure the schema exists. */
@@ -253,4 +276,141 @@ export function getEvents(
     type: row.type,
     payload: row.payload === null ? null : JSON.parse(row.payload),
   }));
+}
+
+// ── Schedules (recurring tasks) ──
+
+interface ScheduleRow {
+  id: string;
+  prompt: string;
+  repo: string | null;
+  branch: string | null;
+  model: string | null;
+  provider: string | null;
+  spec: string;
+  enabled: number;
+  last_run_at: number | null;
+  next_run_at: number | null;
+  created_at: number;
+}
+
+function rowToSchedule(row: ScheduleRow): Schedule {
+  return {
+    id: row.id,
+    prompt: row.prompt,
+    repo: row.repo,
+    branch: row.branch,
+    model: row.model,
+    provider: row.provider,
+    spec: row.spec,
+    enabled: row.enabled === 1,
+    lastRunAt: row.last_run_at,
+    nextRunAt: row.next_run_at,
+    createdAt: row.created_at,
+  };
+}
+
+/** Create a schedule. nextRunAt is computed by the caller (scheduler). */
+export function createSchedule(
+  input: ScheduleInput & { nextRunAt: number | null }
+): Schedule {
+  const sched: Schedule = {
+    id: randomUUID(),
+    prompt: input.prompt,
+    repo: input.repo ?? null,
+    branch: input.branch ?? null,
+    model: input.model ?? null,
+    provider: input.provider ?? null,
+    spec: input.spec,
+    enabled: input.enabled ?? true,
+    lastRunAt: null,
+    nextRunAt: input.nextRunAt,
+    createdAt: Date.now(),
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO schedules
+        (id, prompt, repo, branch, model, provider, spec, enabled, next_run_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      sched.id,
+      sched.prompt,
+      sched.repo,
+      sched.branch,
+      sched.model,
+      sched.provider,
+      sched.spec,
+      sched.enabled ? 1 : 0,
+      sched.nextRunAt,
+      sched.createdAt
+    );
+  return sched;
+}
+
+const SCHED_UPDATABLE: Record<string, keyof Schedule> = {
+  prompt: "prompt",
+  repo: "repo",
+  branch: "branch",
+  model: "model",
+  provider: "provider",
+  spec: "spec",
+  enabled: "enabled",
+  last_run_at: "lastRunAt",
+  next_run_at: "nextRunAt",
+};
+
+/** Apply a partial update to a schedule and return the fresh row (or null). */
+export function updateSchedule(
+  id: string,
+  patch: Partial<Schedule>
+): Schedule | null {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  for (const [column, key] of Object.entries(SCHED_UPDATABLE)) {
+    if (key in patch) {
+      sets.push(`${column} = ?`);
+      const v = patch[key];
+      values.push(key === "enabled" ? (v ? 1 : 0) : v ?? null);
+    }
+  }
+  if (sets.length) {
+    values.push(id);
+    getDb()
+      .prepare(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...(values as (string | number | null)[]));
+  }
+  return getSchedule(id);
+}
+
+/** Fetch a single schedule by id. */
+export function getSchedule(id: string): Schedule | null {
+  const row = getDb()
+    .prepare("SELECT * FROM schedules WHERE id = ?")
+    .get(id) as unknown as ScheduleRow | undefined;
+  return row ? rowToSchedule(row) : null;
+}
+
+/** List all schedules, newest first. */
+export function listSchedules(): Schedule[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM schedules ORDER BY created_at DESC, rowid DESC")
+    .all() as unknown as ScheduleRow[];
+  return rows.map(rowToSchedule);
+}
+
+/** Delete a schedule. Returns true if a row was removed. */
+export function deleteSchedule(id: string): boolean {
+  const result = getDb().prepare("DELETE FROM schedules WHERE id = ?").run(id);
+  return Number(result.changes) > 0;
+}
+
+/** Enabled schedules whose next run time is at or before `now`. */
+export function dueSchedules(now: number): Schedule[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT * FROM schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at ASC"
+    )
+    .all(now) as unknown as ScheduleRow[];
+  return rows.map(rowToSchedule);
 }
