@@ -11,9 +11,14 @@ import snippetRoute from "./routes/snippet.js";
 import eventsRoute from "./routes/events.js";
 import githubRoute from "./routes/github.js";
 import userRoute from "./routes/user.js";
+import tasksRoute from "./routes/tasks.js";
 import { validateToken, hasAnyToken } from "./auth.js";
+import { initStore } from "./core/store.js";
 
 dotenv.config();
+
+// Open the durable task store (creates the SQLite schema on first run).
+initStore();
 
 // Token validation is centralized in ./auth.ts (shared by HTTP + WebSocket auth)
 if (!hasAnyToken()) {
@@ -86,6 +91,7 @@ app.register(snippetRoute);
 app.register(eventsRoute);
 app.register(githubRoute);
 app.register(userRoute);
+app.register(tasksRoute);
 
 app.get("/health", async () => ({
   status: "ok",

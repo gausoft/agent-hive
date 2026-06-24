@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 import { join, resolve, basename } from "node:path";
 import { rmSync } from "node:fs";
 import { EventEmitter } from "node:events";
-import { createManagedSession } from "../sessions/manager.js";
+import { createManagedSession, getSession } from "../sessions/manager.js";
 import { resolveProvider } from "./providers.js";
 import { runCodeReview } from "../loops/review.js";
 import {
@@ -63,6 +63,34 @@ export function subscribeTask(
 function record(taskId: string, type: string, payload?: unknown): void {
   const event = appendEvent(taskId, type, payload);
   bus.emit(taskId, event);
+}
+
+// Live mapping from task id to its pi session id, plus tasks being aborted.
+const taskSessions = new Map<string, string>();
+const aborting = new Set<string>();
+
+/**
+ * Abort a running (or reviewing) task. Returns false if the task is not in an
+ * abortable state. The terminal `aborted` status is set by runTask's catch.
+ */
+export async function abortTask(taskId: string): Promise<boolean> {
+  const task = getTask(taskId);
+  if (!task || (task.status !== "running" && task.status !== "review")) {
+    return false;
+  }
+  aborting.add(taskId);
+  const sessionId = taskSessions.get(taskId);
+  if (sessionId) {
+    const managed = getSession(sessionId);
+    if (managed) {
+      try {
+        await managed.session.abort();
+      } catch {
+        // best effort
+      }
+    }
+  }
+  return true;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -185,6 +213,7 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
       sessionId: managed.sessionId,
       model: managed.session.model?.id,
     });
+    taskSessions.set(taskId, managed.sessionId);
 
     // Persist non-delta events (milestones, tool calls, final messages) and
     // broadcast everything live. Streaming text deltas are emitted live only,
@@ -264,13 +293,17 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
     updateTask(taskId, { status: "done", finishedAt: Date.now() });
     record(taskId, "status", { status: "done" });
   } catch (err: any) {
-    updateTask(taskId, {
-      status: "failed",
-      error: err?.message || String(err),
-      finishedAt: Date.now(),
-    });
-    record(taskId, "error", { message: err?.message || String(err) });
+    const msg = err?.message || String(err);
+    if (aborting.has(taskId)) {
+      updateTask(taskId, { status: "aborted", finishedAt: Date.now() });
+      record(taskId, "status", { status: "aborted" });
+    } else {
+      updateTask(taskId, { status: "failed", error: msg, finishedAt: Date.now() });
+      record(taskId, "error", { message: msg });
+    }
   } finally {
+    aborting.delete(taskId);
+    taskSessions.delete(taskId);
     if (repoDir && !KEEP_WORKSPACE) {
       try {
         rmSync(cleanupRoot, { recursive: true, force: true });
