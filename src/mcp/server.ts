@@ -224,5 +224,126 @@ server.tool(
   }
 );
 
+// ── Board tools (durable tasks, persisted to the store, open PRs) ──
+
+server.tool(
+  "hive_dispatch",
+  "Dispatch a durable coding task to the board. It is persisted, runs on the VPS, and opens a pull request with the work. Returns the task id to track it.",
+  {
+    prompt: z.string().min(1).describe("What the agent should do"),
+    repo: z.string().optional().describe("Git repo (owner/repo or URL)"),
+    branch: z.string().optional().describe("Base branch to start from (optional)"),
+    model: z.string().optional().describe("Model override"),
+    provider: z.string().optional().describe("Provider override"),
+    thinkingLevel: z
+      .enum(["off", "minimal", "low", "medium", "high", "xhigh"])
+      .optional()
+      .describe("Thinking level. Omit for default."),
+  },
+  async (args) => {
+    const task = await api<Record<string, unknown>>("/api/tasks", args);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }],
+    };
+  }
+);
+
+server.tool(
+  "hive_tasks",
+  "List board tasks, newest first. Filter by status to focus the board.",
+  {
+    status: z
+      .enum(["queued", "running", "review", "done", "failed", "aborted"])
+      .optional()
+      .describe("Filter by status"),
+    limit: z.number().int().positive().optional().describe("Max tasks"),
+  },
+  async ({ status, limit }) => {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (limit) qs.set("limit", String(limit));
+    const q = qs.toString();
+    const result = await api<{ tasks: unknown[] }>(
+      `/api/tasks${q ? `?${q}` : ""}`
+    );
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+server.tool(
+  "hive_task",
+  "Get a board task: status, PR url, error, and a short diff preview. Use hive_task_diff for the full diff and hive_task_events for the timeline.",
+  {
+    id: z.string().min(1).describe("Task id from hive_dispatch"),
+  },
+  async ({ id }) => {
+    const t = await api<Record<string, any>>(`/api/tasks/${id}`);
+    const diff: string = t.diff || "";
+    const shaped = {
+      ...t,
+      diff: undefined,
+      hasDiff: diff.length > 0,
+      diffChars: diff.length,
+      diffPreview: diff.slice(0, 2000),
+    };
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(shaped, null, 2) }],
+    };
+  }
+);
+
+server.tool(
+  "hive_task_diff",
+  "Get the full captured diff of a board task.",
+  {
+    id: z.string().min(1).describe("Task id"),
+  },
+  async ({ id }) => {
+    const t = await api<{ diff?: string }>(`/api/tasks/${id}`);
+    return {
+      content: [
+        { type: "text" as const, text: t.diff || "(no diff captured)" },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "hive_task_events",
+  "Get a board task's event timeline (milestones and progress).",
+  {
+    id: z.string().min(1).describe("Task id"),
+    afterId: z.number().int().optional().describe("Only events after this id"),
+  },
+  async ({ id, afterId }) => {
+    const qs = afterId ? `?afterId=${afterId}` : "";
+    const result = await api<{ events: unknown[] }>(
+      `/api/tasks/${id}/events${qs}`
+    );
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+server.tool(
+  "hive_task_abort",
+  "Abort a running board task.",
+  {
+    id: z.string().min(1).describe("Task id"),
+  },
+  async ({ id }) => {
+    const result = await api<{ id: string; aborted: boolean }>(
+      `/api/tasks/${id}/abort`,
+      {}
+    );
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
