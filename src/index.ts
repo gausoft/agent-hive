@@ -11,29 +11,12 @@ import snippetRoute from "./routes/snippet.js";
 import eventsRoute from "./routes/events.js";
 import githubRoute from "./routes/github.js";
 import userRoute from "./routes/user.js";
+import { validateToken, hasAnyToken } from "./auth.js";
 
 dotenv.config();
 
-// Multi-token support — backwards compatible with single API_TOKEN
-const API_TOKEN = process.env.API_TOKEN;
-const API_TOKENS: Record<string, { name: string; role?: string }> = {};
-
-if (process.env.API_TOKENS) {
-  try {
-    const parsed = JSON.parse(process.env.API_TOKENS);
-    for (const [tok, profile] of Object.entries(parsed)) {
-      API_TOKENS[tok] = profile as any;
-    }
-  } catch {
-    console.warn("Failed to parse API_TOKENS, falling back to single token");
-  }
-}
-
-if (!Object.keys(API_TOKENS).length && API_TOKEN) {
-  API_TOKENS[API_TOKEN] = { name: "Admin" };
-}
-
-if (!Object.keys(API_TOKENS).length) {
+// Token validation is centralized in ./auth.ts (shared by HTTP + WebSocket auth)
+if (!hasAnyToken()) {
   console.error("FATAL: API_TOKEN or API_TOKENS not set in .env");
   process.exit(1);
 }
@@ -53,13 +36,13 @@ app.addHook("onRequest", async (req, reply) => {
     req.headers.authorization?.replace("Bearer ", "") ||
     (req.query as Record<string, string>).token;
 
-  const userProfile = API_TOKENS[token || ""];
+  const userProfile = validateToken(token);
   if (!userProfile) {
     reply.code(401).send({ error: "Unauthorized" });
     return;
   }
 
-  (req as any).hiveUser = { token: token!, name: userProfile.name, role: userProfile.role || "user" };
+  (req as any).hiveUser = { token: token!, name: userProfile.name, role: userProfile.role };
 });
 
 await app.register(fWebSocket);

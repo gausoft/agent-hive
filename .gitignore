@@ -4,3 +4,12 @@ dist/
 *.log
 ui/dist/
 ui/node_modules/
+
+# Local data (SQLite store, etc.)
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+.DS_Store

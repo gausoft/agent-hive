@@ -86,9 +86,12 @@ export default async function promptRoute(app: FastifyInstance) {
         await execFileAsync("git", cloneArgs, { timeout: 60000, maxBuffer: 1024 * 1024 });
         app.log.info({ sessionId, repo: sshUrl, path: repoDir }, "Repo cloned");
 
-        // Configure git author
-        await execFileAsync("git", ["config", "user.name", "oatclaw88"], { cwd: repoDir });
-        await execFileAsync("git", ["config", "user.email", "oatclaw88@users.noreply.github.com"], { cwd: repoDir });
+        // Configure git author (override via GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL)
+        const gitAuthorName = process.env.GIT_AUTHOR_NAME || "agent-hive";
+        const gitAuthorEmail =
+          process.env.GIT_AUTHOR_EMAIL || "agent-hive@users.noreply.github.com";
+        await execFileAsync("git", ["config", "user.name", gitAuthorName], { cwd: repoDir });
+        await execFileAsync("git", ["config", "user.email", gitAuthorEmail], { cwd: repoDir });
 
         // Capture pre-task SHA for diff-based code review
         try {

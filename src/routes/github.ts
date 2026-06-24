@@ -121,7 +121,6 @@ export default async function githubRoute(app: FastifyInstance) {
     }
 
     try {
-      await gh(["repo", "set-default-branch", body.branch], targetDir);
       await execFileAsync("git", ["checkout", "-b", body.branch], {
         cwd: targetDir,
         timeout: 10000,
@@ -292,7 +291,7 @@ export default async function githubRoute(app: FastifyInstance) {
     }
   });
 
-  // Fork a repo into oatclaw88 account, then clone it
+  // Fork a repo into the authenticated account, then clone it
   app.post("/api/github/fork", async (req, reply) => {
     const body = req.body as { repo?: string };
     if (!body.repo) return reply.code(400).send({ error: "repo is required" });
@@ -305,12 +304,15 @@ export default async function githubRoute(app: FastifyInstance) {
     }
 
     try {
-      // Fork into oatclaw88 account
-      const { stdout: forkOut } = await gh(["repo", "fork", body.repo, "--clone=false", "--remote=false"]);
+      // Resolve the authenticated GitHub account that will own the fork
+      const { stdout: loginOut } = await gh(["api", "user", "--jq", ".login"]);
+      const login = loginOut.trim();
+      // Fork into the authenticated account
+      await gh(["repo", "fork", body.repo, "--clone=false", "--remote=false"]);
       // Wait a moment for GitHub to process the fork
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 2000));
       // Clone the forked repo
-      await gh(["repo", "clone", `oatclaw88/${repoName}`, targetDir]);
+      await gh(["repo", "clone", `${login}/${repoName}`, targetDir]);
       return { forked: true, cloned: true, path: repoName };
     } catch (err: any) {
       // If fork fails (already forked?), try cloning the original

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getSession, touchIdleTimer } from "../sessions/manager.js";
+import { validateToken } from "../auth.js";
 
 export default async function eventsRoute(app: FastifyInstance) {
   app.get(
@@ -7,10 +8,8 @@ export default async function eventsRoute(app: FastifyInstance) {
     { websocket: true },
     (socket, req) => {
       // Auth: check token from query param (WebSocket can't send headers)
-      const token =
-        (req.query as Record<string, string>).token;
-      const apiToken = process.env.API_TOKEN;
-      if (token !== apiToken) {
+      const token = (req.query as Record<string, string>).token;
+      if (!validateToken(token)) {
         socket.close(4001, "Unauthorized");
         return;
       }

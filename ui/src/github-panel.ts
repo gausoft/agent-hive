@@ -318,7 +318,7 @@ export class GitHubPanel {
 
   private async forkAndClone(fullName: string): Promise<void> {
     const name = fullName.split("/").pop() || fullName;
-    if (confirm(`Fork ${fullName} into oatclaw88 and clone?`)) {
+    if (confirm(`Fork ${fullName} and clone?`)) {
       try {
         const res = await this.api("/api/github/fork", {
           method: "POST",
