@@ -8,6 +8,7 @@
 
 import { HiveAgentProxy } from "./hive-agent.js";
 import { GitHubPanel } from "./github-panel.js";
+import { BoardPanel } from "./board.js";
 
 const STORAGE_KEY = "hive_token";
 
@@ -18,6 +19,7 @@ let token = localStorage.getItem(STORAGE_KEY) || "";
 let user: { name: string } | null = null;
 let agent: HiveAgentProxy | null = null;
 let ghPanel: GitHubPanel | null = null;
+let boardPanel: BoardPanel | null = null;
 let currentTab = "chat";
 
 function api(path: string, opts: RequestInit = {}): Promise<Response> {
@@ -141,6 +143,7 @@ function switchTab(tab: string) {
   document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.tab === tab));
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", (p as HTMLElement).dataset.tab === tab));
   if (tab === "github" && ghPanel) { ghPanel.refresh(); }
+  if (boardPanel) { tab === "board" ? boardPanel.start() : boardPanel.stop(); }
 }
 
 // ---- Token Gate ----
@@ -167,6 +170,7 @@ async function renderApp() {
 
   agent = new HiveAgentProxy({ serverUrl, token });
   ghPanel = new GitHubPanel(token, serverUrl);
+  boardPanel = new BoardPanel(token, serverUrl);
   (window as any)._ghPanel = ghPanel;
   (window as any)._switchTab = switchTab;
   (window as any)._logout = doLogout;
@@ -180,6 +184,7 @@ async function renderApp() {
         <div class="tabs">
           <button class="tab-btn active" data-tab="chat" onclick="_switchTab('chat')">💬 Chat</button>
           <button class="tab-btn" data-tab="github" onclick="_switchTab('github')">🐙 GitHub</button>
+          <button class="tab-btn" data-tab="board" onclick="_switchTab('board')">📋 Board</button>
         </div>
       </div>
       <div class="header-right">
@@ -215,6 +220,11 @@ async function renderApp() {
             <button id="sendBtn" onclick="_sendChat()">Send</button>
           </div>
         </div>
+      </div>
+
+      <!-- Board Tab -->
+      <div class="tab-panel" data-tab="board">
+        <div class="board-root" id="boardRoot"></div>
       </div>
 
       <!-- GitHub Tab -->
@@ -263,6 +273,7 @@ async function renderApp() {
   (window as any)._chatKey = handleChatKey;
   (window as any)._sendChat = sendChat;
   ghPanel.refresh();
+  boardPanel.mount($("boardRoot"));
 
   // Focus chat input
   setTimeout(() => ($("chatInput") as HTMLTextAreaElement)?.focus(), 100);
