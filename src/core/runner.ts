@@ -18,11 +18,21 @@ import { EventEmitter } from "node:events";
 import { createManagedSession } from "../sessions/manager.js";
 import { resolveProvider } from "./providers.js";
 import { runCodeReview } from "../loops/review.js";
+import {
+  taskBranchName,
+  createBranch,
+  commitAll,
+  commitsSince,
+  pushBranch,
+  openPullRequest,
+} from "./git.js";
 import { appendEvent, getTask, updateTask } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 const WORKSPACE = resolve(process.env.WORKSPACE || "/tmp/hive-workspace");
 const KEEP_WORKSPACE = process.env.HIVE_KEEP_WORKSPACE === "1";
+// Open a PR with the work by default; set HIVE_OPEN_PR=0 to let the agent push freely.
+const OPEN_PR = process.env.HIVE_OPEN_PR !== "0";
 
 export const DEFAULT_SYSTEM_PROMPT =
   process.env.HIVE_SYSTEM_PROMPT ||
@@ -156,6 +166,13 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
       baseSha = cloned.baseSha;
       updateTask(taskId, { baseSha: baseSha || null });
       record(taskId, "cloned", { repo: task.repo, branch: task.branch });
+
+      // Isolate the work on a dedicated branch when we are going to open a PR.
+      if (OPEN_PR) {
+        const workBranch = taskBranchName(taskId);
+        await createBranch(repoDir, workBranch);
+        record(taskId, "branch", { branch: workBranch, base: task.branch });
+      }
     }
 
     const managed = await createManagedSession({
@@ -181,10 +198,15 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
     });
 
     const systemPrompt = opts.systemPromptOverride || DEFAULT_SYSTEM_PROMPT;
+    const repoInstruction = OPEN_PR
+      ? "Read files, make changes, and commit when done. Do not push or open a PR \u2014 that is handled for you."
+      : "Read files, make changes, commit and push when done.";
     const prefix = repoDir
       ? "The repo is at " +
         repoDir +
-        ". Read AGENTS.md for project context. Work in that directory. Read files, make changes, commit and push when done.\n\n"
+        ". Read AGENTS.md for project context. Work in that directory. " +
+        repoInstruction +
+        "\n\n"
       : "";
     const fullPrompt = systemPrompt + "\n\n" + prefix + task.prompt;
 
@@ -215,7 +237,29 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
       if (diff) updateTask(taskId, { diff });
     }
 
-    // NOTE: PR creation hook lands in step 4 (core/git.ts).
+    // Push the work and open a pull request.
+    if (repoDir && OPEN_PR) {
+      try {
+        const workBranch = taskBranchName(taskId);
+        await commitAll(repoDir, "agent-hive: " + task.prompt.slice(0, 60));
+        const ahead = await commitsSince(repoDir, baseSha);
+        if (ahead > 0) {
+          await pushBranch(repoDir, workBranch);
+          const url = await openPullRequest(repoDir, {
+            base: task.branch ?? undefined,
+          });
+          if (url) {
+            updateTask(taskId, { prUrl: url });
+            record(taskId, "pr", { url });
+          }
+        } else {
+          record(taskId, "no_changes", {});
+        }
+      } catch (prErr: any) {
+        // PR failures must not fail the task itself.
+        record(taskId, "pr_error", { message: prErr?.message || String(prErr) });
+      }
+    }
 
     updateTask(taskId, { status: "done", finishedAt: Date.now() });
     record(taskId, "status", { status: "done" });
