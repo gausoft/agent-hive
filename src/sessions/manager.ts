@@ -5,35 +5,10 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { type Model } from "@mariozechner/pi-ai";
+import { PROVIDER_CONFIGS, resolveProvider } from "../core/providers.js";
 
-// Provider configs for auto-registration (OpenAI-compatible APIs)
-export const PROVIDER_CONFIGS: Record<
-  string,
-  { envKey: string; baseUrl: string }
-> = {
-  openrouter: {
-    envKey: "OPENROUTER_API_KEY",
-    baseUrl: "https://openrouter.ai/api/v1",
-  },
-  zai: { envKey: "ZAI_CODE", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
-  deepseek: {
-    envKey: "DEEPSEEK_API_KEY",
-    baseUrl: "https://api.deepseek.com/v1",
-  },
-};
-
-/** Auto-detect provider: explicit arg > DEFAULT_PROVIDER env > detect from available keys > openrouter */
-export function resolveProvider(explicit?: string): string {
-  return (
-    explicit ||
-    process.env.DEFAULT_PROVIDER ||
-    (process.env.ZAI_CODE ? "zai" : undefined) ||
-    (process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined) ||
-    (process.env.OPENROUTER_API_KEY ? "openrouter" : undefined) ||
-    (process.env.ANTHROPIC_API_KEY ? "anthropic" : undefined) ||
-    "openrouter"
-  );
-}
+// Re-exported for existing consumers (routes, loops).
+export { PROVIDER_CONFIGS, resolveProvider };
 
 interface ManagedSession {
   sessionId: string;
