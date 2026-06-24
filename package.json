@@ -4,6 +4,26 @@
   "description": "Self-hosted coding agent server — pi.dev SDK + Fastify",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/core/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./mcp": {
+      "import": "./dist/mcp/server.js"
+    }
+  },
+  "files": [
+    "dist",
+    "ui/dist",
+    ".env.example",
+    "README.md"
+  ],
   "bin": {
     "hive": "dist/cli/hive.js"
   },
