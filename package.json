@@ -4,11 +4,15 @@
   "description": "Self-hosted coding agent server — pi.dev SDK + Fastify",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "hive": "dist/cli/hive.js"
+  },
   "scripts": {
     "build": "npx -p typescript tsc",
     "start": "node dist/index.js",
     "mcp": "node dist/mcp/server.js",
     "telegram": "node dist/telegram/bot.js",
+    "cli": "node dist/cli/hive.js",
     "dev": "tsc --watch & node --watch dist/index.js",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\""
   },
