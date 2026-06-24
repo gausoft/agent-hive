@@ -1,0 +1,43 @@
+/** Core domain types for tasks and their event log. */
+
+export type TaskStatus =
+  | "queued"
+  | "running"
+  | "review"
+  | "done"
+  | "failed"
+  | "aborted";
+
+export interface Task {
+  id: string;
+  repo: string | null;
+  branch: string | null;
+  prompt: string;
+  model: string | null;
+  provider: string | null;
+  status: TaskStatus;
+  baseSha: string | null;
+  diff: string | null;
+  prUrl: string | null;
+  error: string | null;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+}
+
+export interface TaskInput {
+  repo?: string | null;
+  branch?: string | null;
+  prompt: string;
+  model?: string | null;
+  provider?: string | null;
+}
+
+/** A single recorded event in a task's timeline (durable, survives restarts). */
+export interface TaskEvent {
+  id: number;
+  taskId: string;
+  ts: number;
+  type: string;
+  payload: unknown;
+}
