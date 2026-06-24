@@ -7,6 +7,10 @@ ui/node_modules/
 
 # Local data (SQLite store, etc.)
 data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal

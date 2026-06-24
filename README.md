@@ -1,194 +1,181 @@
 # Agent Hive
 
-**Self-hosted coding agent server.** Your own private coding AI on a VPS. Clone repos, write code, push changes — all through a simple API or web UI.
+**Self-hosted coding agents that open pull requests.** Dispatch a task from a
+kanban board, your terminal, an MCP client, or Telegram — Agent Hive clones the
+repo on your own server, runs a [pi.dev](https://pi.dev) coding agent, captures
+the diff, and opens a PR. Every task is persisted, so progress survives
+restarts and the same state feeds every surface.
 
-Powered by [pi.dev](https://pi.dev) SDK (BSD 3-Clause).
+Powered by the [pi.dev](https://pi.dev) SDK (BSD 3-Clause). Fork of
+[stansz/agent-hive](https://github.com/stansz/agent-hive).
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Install
-curl -sL https://raw.githubusercontent.com/stansz/agent-hive/main/install.sh | bash
+git clone https://github.com/gausoft/agent-hive.git
 cd agent-hive
-
-# 2. Generate an API token
-openssl rand -hex 32
-# Copy the output — you'll need it below
-
-# 3. Edit .env — paste your API token and add LLM provider keys
-nano .env
-# API_TOKEN=<paste-token-here>
-# DEEPSEEK_API_KEY=sk-...  (or OPENROUTER_API_KEY, or ZAI_CODE, etc.)
-
-# 4. Start the server
-node dist/index.js
+cp .env.example .env
+# Edit .env: set API_TOKEN and at least one LLM provider key
+npm install
+npm run build
+npm start
 ```
 
-### Web UI
+Open the board at `http://localhost:8080/ui/` and log in with your `API_TOKEN`.
 
-Once the server is running, open your browser:
+## Surfaces
 
-| URL | What it is |
-|-----|------------|
-| `http://localhost:8080/` | Landing page — API docs, setup guide |
-| `http://localhost:8080/ui/` | Chat interface — send tasks, check results |
+One core, four ways to drive it — all reading the same durable store:
 
-The web UI uses the same `API_TOKEN` from your `.env`. No separate frontend needed.
+| Surface | How | Best for |
+|---------|-----|----------|
+| **Board (Web + REST)** | `http://localhost:8080/ui/`, `/api/tasks` | Watch tasks live, review diffs, open PRs |
+| **CLI** | `hive new …`, `hive watch …` | Dispatching and following from a terminal |
+| **MCP** | `npm run mcp` (stdio) | Driving Hive from Claude Code, Cursor, etc. |
+| **Telegram** | `npm run telegram` | Dispatching and milestone alerts from your phone |
+| **Embeddable core** | `import … from "agent-hive/core"` | Building Hive into your own app |
 
-### Or Use MCP
-
-Connect any MCP-compatible client (Claude Code, Cursor, OpenClaw):
-
-```bash
-export HIVE_URL=http://localhost:8080
-export HIVE_TOKEN=your-api-token
-npx github:stansz/hive-mcp
-```
-
-See [stansz/hive-mcp](https://github.com/stansz/hive-mcp) for full setup.
-
----
-
-# What It Does
-
-Agent Hive runs coding LLMs on your own infrastructure. No data leaves your VPS. It can:
-
-- **Clone any repo** — private (SSH deploy keys) or public
-- **Read, write, edit, commit, push** — full git workflow
-- **Diff-based code review** — reviews actual git diffs, applies fixes in-repo
-- **Fork and work** — fork external repos into oatclaw88 bot account
-- **Web UI** — chat interface with streaming, GitHub repo browser, commit/push
-- **MCP tools** — connect from any MCP client (Claude Code, Cursor, Hermes)
-
-## How It Works
+## The Task Lifecycle
 
 ```
-HTTP client ──→ Agent Hive ──→ pi.dev SDK ──→ LLM API
-                    │
-                    └── clones repo → works → pushes changes
+queued ──→ running ──→ [review] ──→ done
+                  └──────────────→ failed | aborted
 ```
 
-1. Send a task via API: "Review and improve trails/regroup.py"
-2. Hive clones the repo into an ephemeral workspace
-3. The LLM reads `AGENTS.md` (auto-discovered), explores the code, makes changes, and pushes
-4. Optionally runs a self-review cycle with a second model
-5. Session data is cleaned up — nothing persists
+1. A task is created (repo + prompt) and persisted as `queued`.
+2. Hive clones the repo, snapshots the base commit, and (by default) creates a
+   work branch `hive/task-<id>`.
+3. The agent reads `AGENTS.md`, edits files, and commits.
+4. Optional self-review cycles diff the work and apply fixes in-repo.
+5. The diff is captured to the store **before** the workspace is cleaned up.
+6. The branch is pushed and a PR is opened (`gh pr create --fill`); the PR URL
+   is stored on the task.
 
-## API
+Set `HIVE_OPEN_PR=0` to skip branch/PR and let the agent push freely.
+Set `HIVE_KEEP_WORKSPACE=1` to keep the clone on disk for inspection.
+
+## Board REST API
 
 All endpoints except `/health` require `Authorization: Bearer <token>`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/health` | Health check (no auth) |
-| POST | `/prompt` | Start a coding task |
-| GET | `/status/:id` | Session state |
-| GET | `/messages/:id` | Session messages |
-| POST | `/abort/:id` | Cancel running session |
-| DELETE | `/session/:id` | Destroy session |
-| POST | `/snippet` | Quick code task (no repo) |
-| WS | `/events/:id` | Streaming events |
-
-### Start a Task
+| POST | `/api/tasks` | Create + start a task |
+| GET | `/api/tasks?status=&limit=` | List tasks (board) |
+| GET | `/api/tasks/:id` | Task detail (status, diff, PR url) |
+| GET | `/api/tasks/:id/events?afterId=` | Event timeline (polling) |
+| POST | `/api/tasks/:id/abort` | Abort a running task |
+| WS | `/api/tasks/:id/stream?token=` | Replay history, then follow live |
 
 ```bash
-curl -X POST http://localhost:8080/prompt \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "Review and improve the parser module",
-    "repo": "https://github.com/owner/repo.git",
-    "provider": "deepseek",
-    "model": "deepseek-v4-pro",
-    "reviewCycles": 1
-  }'
+curl -X POST http://localhost:8080/api/tasks \
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{ "repo": "owner/repo", "prompt": "add a healthcheck endpoint" }'
 ```
 
-Request fields:
+Task fields: `prompt` (required), `repo`, `branch` (base), `model`, `provider`,
+`thinkingLevel`, `reviewCycles`, `reviewModel`, `systemPromptOverride`.
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `prompt` | yes | Task description |
-| `repo` | no | Git repo URL (HTTPS — auto-converted to SSH for deploy key auth) |
-| `provider` | no | LLM provider |
-| `model` | no | Model ID |
-| `reviewCycles` | no | Auto-review rounds (default 0) |
-| `reviewModel` | no | Different model for review cycles |
-| `branch` | no | Branch to clone |
+The legacy session API (`/prompt`, `/status/:id`, `/messages/:id`, `/abort/:id`,
+`/snippet`, `WS /events/:id`) and the GitHub helper routes (`/api/github/*`)
+remain for the chat UI and back-compat.
 
-### Check Status
+## CLI
 
 ```bash
-curl http://localhost:8080/status/{sessionId} \
-  -H "Authorization: Bearer $API_TOKEN"
+export HIVE_URL=http://localhost:8080 HIVE_TOKEN=your-token
+
+hive new --repo owner/repo "add a healthcheck endpoint"
+hive list --status running
+hive status <id>
+hive watch <id>     # live agent output + milestones until the task finishes
+hive diff <id>
+hive abort <id>
 ```
 
-### Streaming Events
+## MCP Tools
 
-Connect to the WebSocket endpoint for real-time streaming:
-
+```bash
+export HIVE_URL=http://localhost:8080 HIVE_TOKEN=your-token
+npm run mcp
 ```
-ws://localhost:8080/events/{sessionId}
+
+Board tools: `hive_dispatch`, `hive_tasks`, `hive_task`, `hive_task_diff`,
+`hive_task_events`, `hive_task_abort`. Legacy session tools
+(`hive_prompt`, `hive_status`, `hive_abort`, `hive_snippet`, …) are also exposed.
+
+## Telegram
+
+```bash
+export HIVE_URL=http://localhost:8080 HIVE_TOKEN=your-token
+export TELEGRAM_BOT_TOKEN=123456:ABC...
+export TELEGRAM_ALLOWED_CHATS=<your-chat-id>
+npm run telegram
 ```
 
-## AGENTS.md Auto-Discovery
+Commands: `/new [owner/repo] <prompt>`, `/list`, `/status <id>`, `/abort <id>`.
+Milestones (clone, branch, review, PR, done/failed) are pushed to the chat. Only
+chat ids in `TELEGRAM_ALLOWED_CHATS` may drive the bot; others are refused and
+told their chat id so it can be added.
 
-Place an `AGENTS.md` in your repo root with project context — Hive reads it automatically.
+## Scheduler (recurring tasks)
 
-The session is created with `cwd` pointing to the cloned repo, so [pi.dev](https://pi.dev)'s built-in `AGENTS.md` discovery kicks in. No prompt hacks needed. The prompt also includes "Read AGENTS.md for project context" as a fallback.
+A schedule dispatches a normal task on a recurrence — same store, same PR flow.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/schedules` | Create (`prompt`, `spec`, optional `repo`/`model`) |
+| GET | `/api/schedules` | List schedules |
+| PATCH | `/api/schedules/:id` | Enable/disable, change spec or prompt |
+| DELETE | `/api/schedules/:id` | Delete |
+| POST | `/api/schedules/:id/run` | Run once now |
+
+Recurrence `spec` is a tiny subset, not full cron:
+`@every <n>(s|m|h|d)` (e.g. `@every 6h`) or `@daily HH:MM` (local time).
+
+## Embeddable Core
+
+The core has no HTTP dependency. Import it into any app:
+
+```ts
+import { initStore, createTask, runTask, subscribeTask } from "agent-hive/core";
+
+initStore();
+const task = createTask({ repo: "owner/repo", prompt: "fix the bug" });
+const unsubscribe = subscribeTask(task.id, (event) => console.log(event.type));
+await runTask(task.id);
+```
+
+Exposes the store, runner, git helpers, scheduler, and provider resolution.
 
 ## Configuration
-
-Your API token and LLM provider keys go in the `.env` file:
-
-```bash
-# Generate a token (any secure random string works)
-openssl rand -hex 32
-```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `API_TOKEN` | (required) | Bearer token for all API calls |
+| `API_TOKENS` | — | JSON map `{ "token": { "name": "...", "role": "..." } }` for multiple tokens |
 | `PORT` | `8080` | Server port |
-| `MAX_CONCURRENT_SESSIONS` | `3` | Max parallel sessions |
-| `SESSION_IDLE_TIMEOUT_MS` | `1800000` | 30 min idle timeout |
-| `DEFAULT_PROVIDER` | `openrouter` | Default LLM provider (auto-detected from available API keys) |
-| `DEFAULT_MODEL` | — | Default model (falls back to provider default if unset) |
-| `DEEPSEEK_API_KEY` | | Direct DeepSeek access |
-| `OPENROUTER_API_KEY` | | OpenRouter gateway |
-| `PI_TELEMETRY` | `0` | Disable pi telemetry |
 | `WORKSPACE` | `/tmp/hive-workspace` | Repo clone directory |
+| `HIVE_DB_PATH` | `data/hive.db` | SQLite store location |
+| `HIVE_OPEN_PR` | `1` | Open a PR with the work (`0` = agent pushes freely) |
+| `HIVE_KEEP_WORKSPACE` | `0` | Keep the clone after a task finishes |
+| `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | gh defaults | Commit identity |
+| `GH_BIN` | `gh` | Path to the GitHub CLI |
+| `DEFAULT_PROVIDER` | auto | LLM provider (auto-detected from keys) |
+| `DEFAULT_MODEL` | — | Default model |
+| `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY` / `ZAI_CODE` / `ANTHROPIC_API_KEY` | — | Provider keys (BYOK) |
+| `MAX_CONCURRENT_SESSIONS` | `3` | Max parallel sessions |
+| `PI_TELEMETRY` | `0` | Disable pi telemetry |
 
-## Deployment
+Client processes (CLI, MCP, Telegram) use `HIVE_URL` + `HIVE_TOKEN`.
 
-### Quick (install script)
-
-```bash
-curl -sL https://raw.githubusercontent.com/stansz/agent-hive/main/install.sh | bash
-cd agent-hive
-# Edit .env
-node dist/index.js
-```
-
-### Manual
-
-```bash
-git clone https://github.com/stansz/agent-hive.git
-cd agent-hive
-cp .env.example .env
-# Edit .env
-npm install --omit=dev
-npm run build
-node dist/index.js
-```
-
-### Systemd
+## Deployment (systemd)
 
 ```ini
 [Unit]
-Description=Agent Hive API Server
+Description=Agent Hive
 After=network.target
 
 [Service]
@@ -204,16 +191,22 @@ EnvironmentFile=/home/youruser/agent-hive/.env
 WantedBy=multi-user.target
 ```
 
-## SSH Deploy Keys (for private repos)
+For private repos, authenticate `gh` on the server (`gh auth login`) or install
+per-repo SSH deploy keys; Hive converts HTTPS repo URLs to SSH automatically.
 
-Hive uses SSH deploy keys to authenticate with private repos — one key per repo.
+## AGENTS.md Auto-Discovery
 
-**To add a repo:**
-1. Generate an ed25519 key on the server
-2. Add the public key as a deploy key via GitHub API
-3. Add the key to your SSH config
+Hive sets the agent's `cwd` to the cloned repo, so pi.dev's built-in `AGENTS.md`
+discovery loads it automatically. Put project context (stack, conventions,
+build/test commands, gotchas) in your repo's `AGENTS.md`.
 
-The server automatically converts HTTPS repo URLs to SSH URLs for deploy key auth.
+## Development
+
+```bash
+npm run build     # tsc
+npm test          # build + node:test suite
+npm run dev       # watch mode
+```
 
 ## License
 

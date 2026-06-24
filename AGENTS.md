@@ -2,252 +2,81 @@
 
 ## What This Is
 
-Self-hosted coding agent server. Clones GitHub repos, runs LLM tasks, pushes changes back. Accessible via REST API and MCP tools.
-
-## Two-Account GitHub Model
-
-Hive uses **two GitHub identities** for isolation and least-privilege:
-
-| Account | Role | Auth Method | Scope |
-|---------|------|-------------|-------|
-| **stansz** | Repo owner (Sz's account) | SSH deploy keys (per-repo) | Only repos with keys installed |
-| **oatclaw88** | Hive's bot account | `gh` CLI OAuth token | Forks, PRs, API queries |
-
-**Why two accounts?** Hive runs on a $2 VPS. If it gets compromised, the attacker only gets oatclaw88 (fork perms) and per-repo deploy keys — not full access to Sz's GitHub.
-
-### Flow 1: Your Repos (stansz/*)
-
-```
-Hive prompt with repo=stansz/geo-scripts
-  → git clone via SSH (deploy key: geo_scripts_deploy)
-  → LLM works in cloned dir
-  → git add -A && commit && push (author: oatclaw88, push via deploy key)
-```
-
-Deploy keys are installed on the **stansz** repo (Settings → Deploy Keys → Allow write access). Hive commits as oatclaw88 but pushes directly to stansz/repo because the deploy key has write access.
-
-### Flow 2: External Repos (third-party/*)
-
-```
-Hive prompt with repo=someorg/somerepo
-  → Fork into oatclaw88 via gh repo fork
-  → Clone the fork via gh repo clone oatclaw88/somerepo
-  → LLM works in cloned dir
-  → Push to oatclaw88 fork
-  → (Phase 2: open PR from oatclaw88 → someorg/somerepo)
-```
-
-## SSH Deploy Keys
-
-One ed25519 key per repo. All stored in `~/.ssh/` on the Hive VPS.
-
-| Key | Installed On | Access |
-|-----|-------------|--------|
-| `agent_hive_deploy` | stansz/agent-hive | read/write |
-| `geo_scripts_deploy` | stansz/geo-scripts | read/write |
-
-### SSH Config (`~/.ssh/config`)
-
-```
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/agent_hive_deploy
-  IdentityFile ~/.ssh/geo_scripts_deploy
-  IdentitiesOnly no
-```
-
-`IdentitiesOnly no` means SSH tries all keys against all repos. GitHub accepts whichever key matches. If no deploy key matches, the `gh` CLI auth (oatclaw88) handles it.
-
-### Adding a New Repo
-
-1. **Generate key on VPS:**
-   ```bash
-   ssh-keygen -t ed25519 -f ~/.ssh/<repo>_deploy -N ""
-   ```
-
-2. **Add deploy key to stansz repo (from your local machine):**
-   ```bash
-   gh repo deploy-key add - --repo stansz/<repo> --title hive-$(date +%Y%m%d) --allow-write < ~/.ssh/<repo>_deploy.pub
-   ```
-   Or via GitHub web: repo Settings → Deploy keys → Add new → paste public key → check "Allow write access"
-
-3. **Add to SSH config on VPS:**
-   Append `IdentityFile ~/.ssh/<repo>_deploy` to the existing `Host github.com` block.
-
-4. **Test:**
-   ```bash
-   ssh -T git@github.com 2>&1  # Should show stansz or oatclaw88
-   git clone git@github.com:stansz/<repo>.git /tmp/test-clone
-   ```
-
-## Git Author
-
-All commits from Hive are authored as:
-- **Name:** oatclaw88
-- **Email:** oatclaw88@users.noreply.github.com
-
-Set in prompt.ts after cloning. If you want commits to show as stansz for your own repos, update the git config lines in `src/routes/prompt.ts`.
-
-## gh CLI Auth
-
-```bash
-gh auth status
-# → Logged in as oatclaw88
-# → Git operations protocol: https
-# → Token: ghp_...
-```
-
-Used for: `gh repo fork`, `gh repo clone`, `gh repo list`, `gh search repos`, and the Web UI repo browser.
-
-The token has repo scope — oatclaw88 can fork any public repo and push to its own forks.
-
-## Environment Variables
-
-Key ones in `/home/jc/agent-hive/.env`:
-
-| Variable | Purpose |
-|----------|---------|
-| `API_TOKEN` | Bearer auth for Hive API |
-| `GITHUB_TOKEN` | oatclaw88's gh CLI token |
-| `DEFAULT_PROVIDER` | LLM provider (openrouter/deepseek/zai) |
-| `DEFAULT_MODEL` | Default LLM model |
-| `DEEPSEEK_API_KEY` | DeepSeek direct access |
-| `OPENROUTER_API_KEY` | OpenRouter gateway |
-| `ZAI_CODE` | Z.AI coding endpoint |
-
-## API Quick Reference
-
-### Core Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check (no auth) |
-| POST | `/prompt` | Start a coding task |
-| GET | `/status/:id` | Check session state |
-| POST | `/abort/:id` | Cancel session |
-| POST | `/snippet` | Quick code task, no repo |
-| WS | `/events/:id` | Streaming events |
-
-### GitHub Endpoints (via `gh` CLI)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/github/repos` | List oatclaw88 repos |
-| POST | `/api/github/clone` | Clone repo to workspace |
-| POST | `/api/github/pull` | Pull latest |
-| POST | `/api/github/branch` | Create branch |
-| POST | `/api/github/push` | Stage, commit, push |
-| POST | `/api/github/fork` | Fork → clone (oatclaw88) |
-| GET | `/api/github/files/:repo` | Browse files |
-| GET | `/api/github/file/:repo` | Read file contents |
-| GET | `/api/github/status/:repo` | Git status + recent commits |
-| GET | `/api/github/search` | Search public repos |
+A self-hosted coding-agent server built on the [pi.dev](https://pi.dev) SDK. It
+turns a prompt into a pull request: clone a repo, run an agent, capture the
+diff, open a PR. Tasks are durable (SQLite) and driven from four surfaces (board
+/REST, CLI, MCP, Telegram) that all share one HTTP-free core.
 
 ## Architecture
 
-**Server:** Fastify (TypeScript) + WebSocket + pi-coding-agent SDK
-**Frontend:** Vanilla TypeScript SPA (Vite) — raw DOM, no framework
-**MCP:** @modelcontextprotocol/sdk
-
-| Component | Lines | Description |
-|-----------|-------|-------------|
-| `src/index.ts` | 119 | Fastify server, auth, static files, routes |
-| `src/sessions/manager.ts` | ~290 | Session lifecycle, provider auto-registration, model resolution |
-| `src/loops/review.ts` | 239 | Diff-based code review + text review (legacy) |
-| `src/routes/prompt.ts` | 220 | Task dispatch: clone repo, create session, auto-review, cleanup |
-| `src/routes/github.ts` | 325 | GitHub API: repos, clone, pull, branch, push, fork, files, search |
-| `src/mcp/server.ts` | 228 | MCP stdio transport |
-| `ui/src/main.ts` | 271 | App shell, auth, chat, tabs |
-| `ui/src/hive-agent.ts` | 306 | WebSocket streaming chat agent |
-| `ui/src/github-panel.ts` | 339 | Repo browser, commit/push modal |
-
-## Phase Status
-
-| Phase | Status |
-|-------|--------|
-| **Phase 1 — Core** | ✅ Complete — API, MCP, Web UI, CF Tunnel |
-| **Phase 2 — GitHub Workflow** | ⚠️ Partial — clone/branch/push/review done, PR creation not built, no TDD loops |
-
-### Phase 2: What's Done vs Pending
-
-**Done:**
-- SSH deploy key auth (two-account model: stansz repos via deploy keys, oatclaw88 bot)
-- Repo clone, branch, stage, commit, push
-- Fork external repos into oatclaw88
-- Diff-based code review with in-repo fix cycles
-- AGENTS.md auto-discovery
-
-**Pending:**
-- PR creation (Flow 2: "open PR from oatclaw88 → upstream")
-- TDD loop (write tests → code → verify → iterate)
-- Session persistence (reload loses all chat history)
-
-## AGENTS.md Auto-Discovery (for your repos)
-
-Hive automatically reads `AGENTS.md` from any repo it clones. If you want Hive to understand your project before it starts coding, add an `AGENTS.md` to your repo root with:
-
-- **Project overview** — what it does, why it exists
-- **Tech stack** — language, framework, key dependencies
-- **Directory structure** — where things live
-- **Conventions** — coding style, naming patterns, preferred approaches
-- **Build/test/lint commands** — so the LLM can verify its work
-- **Gotchas** — non-obvious design decisions, known issues, things not to touch
-
-How it works: Hive sets `cwd` to the cloned repo, so pi.dev's built-in AGENTS.md discovery loads it automatically. The prompt also includes "Read AGENTS.md for project context" as a fallback. No configuration needed — just put the file there.
-
----
-
-## Auto Code Review (diff-based)
-
-When `reviewCycles > 0` is set on a repo task, Hive performs a proper code review using actual git diffs — not LLM text output.
-
-### How it works
-
-1. **Pre-task snapshot** — captures `git rev-parse HEAD` before the LLM starts
-2. **Main task** — LLM edits files and commits
-3. **Diff** — `git diff <baseSha>` gets the real changes
-4. **Review** — separate session reviews the diff for bugs, security issues, edge cases, style, and correctness
-5. **Fix** — new agent session with `cwd=repoDir` reads files and applies fixes directly
-6. **Commit** — auto-commits fixes as "review: apply fixes from cycle N"
-7. **Repeat** for N cycles (configurable)
-
-### What the reviewer checks
-
-- **Bugs** — logic errors, off-by-one, null/undefined, race conditions
-- **Security** — injection, auth issues, data exposure, unsafe deserialization
-- **Edge cases** — empty inputs, boundary conditions, error paths
-- **Style** — naming, consistency, unnecessary complexity
-- **Correctness** — does the change actually do what was asked?
-
-Each finding includes file location, severity (critical / warning / nit), and a suggested fix.
-
-### LGTM shortcut
-
-If the review says "LGTM" on the first cycle, the fix pass is skipped entirely.
-
-### Usage
-
-**API:**
-```json
-{
-  "prompt": "Refactor the parser module",
-  "repo": "https://github.com/owner/repo",
-  "reviewCycles": 1,
-  "reviewModel": "deepseek-v4-pro"
-}
+```
+                 ┌──────────────── core (no HTTP) ────────────────┐
+  surfaces  ───► │ store (SQLite) · runner · git · scheduler ·    │
+                 │ providers                                       │
+                 └────────────────────────────────────────────────┘
+  REST+WS (board) · MCP stdio · CLI · Telegram  all call the core
 ```
 
-**MCP tools:** Use `mcp_hive_hive_prompt` with `thinkingLevel` param.
+| Path | Role |
+|------|------|
+| `src/core/store.ts` | SQLite store (`tasks`, `task_events`, `schedules`) + CRUD |
+| `src/core/runner.ts` | Task lifecycle: clone → branch → agent → review → diff → PR |
+| `src/core/git.ts` | Branch, commit, push, `gh pr create` helpers |
+| `src/core/scheduler.ts` | Recurrence parser (`nextRun`) + minute-resolution loop |
+| `src/core/providers.ts` | Provider config + model resolution (BYOK) |
+| `src/core/index.ts` | Public barrel → published as `agent-hive/core` |
+| `src/auth.ts` | Shared token validation (`API_TOKEN` + `API_TOKENS` map) |
+| `src/index.ts` | Fastify server, auth hook, store + scheduler boot, routes |
+| `src/routes/tasks.ts` | Board REST API + live WS stream |
+| `src/routes/schedules.ts` | Schedule REST API |
+| `src/routes/prompt.ts`, `github.ts`, … | Legacy session + GitHub helper routes |
+| `src/sessions/manager.ts` | pi session lifecycle (in-memory), provider registration |
+| `src/loops/review.ts` | Diff-based code review cycle |
+| `src/mcp/server.ts` | MCP stdio tools (board + legacy session tools) |
+| `src/telegram/bot.ts` | Telegram bot (zero-dep, long-polling) |
+| `src/cli/hive.ts` | Thin CLI over the REST API |
+| `ui/` | Vanilla TS + Vite SPA (chat, GitHub panel, board) — no framework |
 
----
+## Task Lifecycle (runner.ts)
 
-## VPS Details
+`queued → running → [review] → done | failed | aborted`
 
-- **IP:** 23.95.36.186
-- **OS:** Debian 13 (trixie)
-- **Node:** v22.22.2
-- **Specs:** 1 core, 3GB RAM, 30GB disk
-- **Services:** agent-hive (systemd), cloudflared (CF Tunnel)
-- **Domain:** hive.ogsapps.cc → localhost:8080 via Cloudflare Tunnel
-- **Firewall:** UFW, SSH only (no public API ports)
+The diff (`git diff <baseSha>`) and all milestone events are persisted **before**
+the workspace is removed, so nothing is lost on cleanup. A per-task event bus
+(`subscribeTask`) powers live streaming without polling. With `HIVE_OPEN_PR=1`
+(default) the work is isolated on `hive/task-<id>` and a PR is opened; PR
+failures are recorded, never fatal.
+
+## Conventions (follow these)
+
+- **All code, comments, identifiers, commit messages, and docs in English.**
+- **Tests** for every non-trivial brick using `node:test` (no extra framework).
+  Run `npm test` (it builds first). Keep pure logic testable (see `nextRun`,
+  `parseNewArgs`, `extractPrUrl`).
+- **Atomic, conventional commits** (`feat(scope): …`, `fix(scope): …`). One
+  concern per commit.
+- **Never commit secrets.** `.env` is gitignored; only `.env.example` is
+  tracked. No `data/`, `dist/`, `node_modules/`, or `*.db` in git.
+- **Keep the README current** when usage changes.
+- **Lazy/minimal first** — prefer the standard library and existing patterns
+  over new dependencies and abstractions. Add sandboxing/Docker only when
+  multi-user or untrusted repos make it necessary.
+
+## Adding Things
+
+- **A board field**: add the column in `store.ts` SCHEMA + `UPDATABLE`, the
+  field in `types.ts`, and surface it where needed. Mind same-millisecond
+  ordering (`ORDER BY created_at DESC, rowid DESC`).
+- **A new surface**: call the core (`createTask` + `runTask` + `subscribeTask`)
+  — do not duplicate lifecycle logic in routes.
+- **A milestone event**: `record(taskId, type, payload)` in the runner; add the
+  type to the milestone sets in `board.ts`, `telegram/bot.ts` if it should
+  surface there.
+
+## Environment
+
+See `.env.example` for the full list. Server needs `API_TOKEN` (or `API_TOKENS`)
+and at least one provider key. Client processes (CLI/MCP/Telegram) use
+`HIVE_URL` + `HIVE_TOKEN`. Git identity is configurable via `GIT_AUTHOR_NAME` /
+`GIT_AUTHOR_EMAIL`; private-repo access is via `gh` auth or SSH deploy keys on
+the host.
