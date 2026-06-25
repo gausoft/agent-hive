@@ -25,6 +25,7 @@ const MILESTONES = new Set([
   "branch",
   "review",
   "pr",
+  "preview",
   "no_changes",
   "pr_error",
   "error",
@@ -62,6 +63,8 @@ export function formatMilestone(event: {
       return `🔍 Review cycle`;
     case "pr":
       return `✅ PR opened: ${p.url}`;
+    case "preview":
+      return `🔗 Preview ready: ${p.url}`;
     case "no_changes":
       return `ℹ️ No changes to propose`;
     case "pr_error":

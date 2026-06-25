@@ -56,6 +56,28 @@ queued ──→ running ──→ [review] ──→ done
 Set `HIVE_OPEN_PR=0` to skip branch/PR and let the agent push freely.
 Set `HIVE_KEEP_WORKSPACE=1` to keep the clone on disk for inspection.
 
+## Preview URLs
+
+Hive doesn't host previews — it **delegates to your deploy platform's PR
+previews**, so it stays agnostic to where you deploy. Since Hive already opens a
+PR, any platform (Coolify, Vercel, Netlify, Railway, Render, Fly…) builds a
+preview environment for it and publishes the URL through the standard GitHub
+signal (`deployment_status` with `state=success`, URL in `environment_url`;
+Netlify uses the commit `status`). Hive reads it and surfaces it on the task
+(`previewUrl`), the board, and Telegram (`🔗 Preview ready: …`).
+
+Two triggers funnel through one core:
+
+- **Webhook (instant, recommended).** Point a repo or GitHub-App webhook at
+  `POST /api/github/webhook` (content type `application/json`, events
+  *Deployment statuses* + *Statuses*) and set `GITHUB_WEBHOOK_SECRET`. The route
+  is public but authenticated by HMAC (`X-Hub-Signature-256`).
+- **Polling fallback (zero-config, on by default).** After the PR, Hive polls
+  the Deployments / commit-status API via `gh` until the URL appears (or
+  `HIVE_PREVIEW_TIMEOUT_MS`). Set `HIVE_PREVIEW=0` to disable.
+
+Prereq: the platform must have PR previews enabled for the repo.
+
 ## Board REST API
 
 All endpoints except `/health` require `Authorization: Bearer <token>`.
@@ -161,6 +183,9 @@ Exposes the store, runner, git helpers, scheduler, and provider resolution.
 | `HIVE_DB_PATH` | `data/hive.db` | SQLite store location |
 | `HIVE_OPEN_PR` | `1` | Open a PR with the work (`0` = agent pushes freely) |
 | `HIVE_KEEP_WORKSPACE` | `0` | Keep the clone after a task finishes |
+| `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for `POST /api/github/webhook` (preview URLs) |
+| `HIVE_PREVIEW` | `1` | Poll for the platform's preview URL after a PR (`0` = off) |
+| `HIVE_PREVIEW_INTERVAL_MS` / `HIVE_PREVIEW_TIMEOUT_MS` | `15000` / `600000` | Preview poll cadence / give-up |
 | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | gh defaults | Commit identity |
 | `GH_BIN` | `gh` | Path to the GitHub CLI |
 | `DEFAULT_PROVIDER` | auto | LLM provider (auto-detected from keys) |

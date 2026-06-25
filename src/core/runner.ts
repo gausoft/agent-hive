@@ -14,7 +14,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve, basename } from "node:path";
 import { rmSync } from "node:fs";
-import { EventEmitter } from "node:events";
 import { createManagedSession, getSession } from "../sessions/manager.js";
 import { resolveProvider } from "./providers.js";
 import { runCodeReview } from "../loops/review.js";
@@ -23,10 +22,13 @@ import {
   createBranch,
   commitAll,
   commitsSince,
+  currentSha,
   pushBranch,
   openPullRequest,
 } from "./git.js";
 import { appendEvent, getTask, updateTask } from "./store.js";
+import { recordEvent, emitTaskEvent, subscribeTask } from "./bus.js";
+import { watchPreview } from "./preview.js";
 
 const execFileAsync = promisify(execFile);
 const WORKSPACE = resolve(process.env.WORKSPACE || "/tmp/hive-workspace");
@@ -45,24 +47,14 @@ export interface RunOptions {
   reviewModel?: string;
 }
 
-// ── Live event bus (in-process), keyed by task id ──────────────────────────
+// ── Live event bus (shared module, keyed by task id) ───────────────────────
 
-const bus = new EventEmitter();
-bus.setMaxListeners(0);
-
-/** Subscribe to a task's live event stream. Returns an unsubscribe function. */
-export function subscribeTask(
-  taskId: string,
-  listener: (event: unknown) => void
-): () => void {
-  bus.on(taskId, listener);
-  return () => bus.off(taskId, listener);
-}
+// Re-exported for back-compat (core/index.ts, routes/tasks.ts import it here).
+export { subscribeTask };
 
 /** Persist a milestone event and broadcast it live. */
 function record(taskId: string, type: string, payload?: unknown): void {
-  const event = appendEvent(taskId, type, payload);
-  bus.emit(taskId, event);
+  recordEvent(taskId, type, payload);
 }
 
 // Live mapping from task id to its pi session id, plus tasks being aborted.
@@ -219,7 +211,7 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
     // broadcast everything live. Streaming text deltas are emitted live only,
     // to avoid flooding the store with per-token rows.
     const unsubscribe = managed.session.subscribe((event: any) => {
-      bus.emit(taskId, event);
+      emitTaskEvent(taskId, event);
       const isDelta =
         event.type === "message_update" &&
         event.assistantMessageEvent?.type === "text_delta";
@@ -280,6 +272,11 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
           if (url) {
             updateTask(taskId, { prUrl: url });
             record(taskId, "pr", { url });
+            // Match deploy-platform webhooks to this task by its head sha, and
+            // poll as a zero-config fallback for the published preview URL.
+            const headSha = await currentSha(repoDir);
+            if (headSha) updateTask(taskId, { headSha });
+            watchPreview(taskId, task.repo, headSha);
           }
         } else {
           record(taskId, "no_changes", {});

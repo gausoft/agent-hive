@@ -31,8 +31,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   provider    TEXT,
   status      TEXT NOT NULL,
   base_sha    TEXT,
+  head_sha    TEXT,
   diff        TEXT,
   pr_url      TEXT,
+  preview_url TEXT,
   error       TEXT,
   created_at  INTEGER NOT NULL,
   started_at  INTEGER,
@@ -80,6 +82,14 @@ export function initStore(
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
+  // Migrations for stores created before these columns existed (idempotent).
+  for (const col of ["head_sha TEXT", "preview_url TEXT"]) {
+    try {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${col}`);
+    } catch {
+      // column already exists
+    }
+  }
 }
 
 function getDb(): DatabaseSync {
@@ -102,8 +112,10 @@ interface TaskRow {
   provider: string | null;
   status: string;
   base_sha: string | null;
+  head_sha: string | null;
   diff: string | null;
   pr_url: string | null;
+  preview_url: string | null;
   error: string | null;
   created_at: number;
   started_at: number | null;
@@ -120,8 +132,10 @@ function rowToTask(row: TaskRow): Task {
     provider: row.provider,
     status: row.status as TaskStatus,
     baseSha: row.base_sha,
+    headSha: row.head_sha,
     diff: row.diff,
     prUrl: row.pr_url,
+    previewUrl: row.preview_url,
     error: row.error,
     createdAt: row.created_at,
     startedAt: row.started_at,
@@ -140,8 +154,10 @@ export function createTask(input: TaskInput): Task {
     provider: input.provider ?? null,
     status: "queued",
     baseSha: null,
+    headSha: null,
     diff: null,
     prUrl: null,
+    previewUrl: null,
     error: null,
     createdAt: Date.now(),
     startedAt: null,
@@ -175,8 +191,10 @@ const UPDATABLE: Record<string, keyof Task> = {
   provider: "provider",
   status: "status",
   base_sha: "baseSha",
+  head_sha: "headSha",
   diff: "diff",
   pr_url: "prUrl",
+  preview_url: "previewUrl",
   error: "error",
   started_at: "startedAt",
   finished_at: "finishedAt",
@@ -209,6 +227,17 @@ export function getTask(id: string): Task | null {
   const row = getDb()
     .prepare("SELECT * FROM tasks WHERE id = ?")
     .get(id) as unknown as TaskRow | undefined;
+  return row ? rowToTask(row) : null;
+}
+
+/** Fetch the most recent task whose pushed head commit matches a sha. */
+export function getTaskByHeadSha(sha: string): Task | null {
+  if (!sha) return null;
+  const row = getDb()
+    .prepare(
+      "SELECT * FROM tasks WHERE head_sha = ? ORDER BY created_at DESC, rowid DESC LIMIT 1"
+    )
+    .get(sha) as unknown as TaskRow | undefined;
   return row ? rowToTask(row) : null;
 }
 

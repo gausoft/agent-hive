@@ -13,6 +13,7 @@ import githubRoute from "./routes/github.js";
 import userRoute from "./routes/user.js";
 import tasksRoute from "./routes/tasks.js";
 import schedulesRoute from "./routes/schedules.js";
+import githubWebhookRoute from "./routes/github-webhook.js";
 import { validateToken, hasAnyToken } from "./auth.js";
 import { initStore } from "./core/store.js";
 import { startScheduler } from "./core/scheduler.js";
@@ -58,6 +59,8 @@ app.addHook("onRequest", async (req, reply) => {
   const publicPaths = ["/health", "/", "/docs", "/public/", "/ui", "/ui/"];
   if (publicPaths.some((p) => req.url === p)) return;
   if (req.url.startsWith("/public/") || req.url.startsWith("/ui/")) return;
+  // Webhook authenticates itself via HMAC (X-Hub-Signature-256), not a token.
+  if (req.url.startsWith("/api/github/webhook")) return;
   if (req.url.startsWith("/assets/") || req.url.endsWith(".css") || req.url.endsWith(".js") || req.url.endsWith(".ico") || req.url.endsWith(".woff2") || req.url.endsWith(".ttf") || req.url.endsWith(".mjs")) return;
 
   const token =
@@ -116,6 +119,7 @@ app.register(githubRoute);
 app.register(userRoute);
 app.register(tasksRoute);
 app.register(schedulesRoute);
+app.register(githubWebhookRoute);
 
 app.get("/health", async () => ({
   status: "ok",

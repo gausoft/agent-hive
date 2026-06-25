@@ -17,8 +17,12 @@ export interface Task {
   provider: string | null;
   status: TaskStatus;
   baseSha: string | null;
+  /** SHA of the pushed work commit — matches deploy-platform webhooks. */
+  headSha: string | null;
   diff: string | null;
   prUrl: string | null;
+  /** Preview URL published by the deploy platform for the PR/commit (if any). */
+  previewUrl: string | null;
   error: string | null;
   createdAt: number;
   startedAt: number | null;

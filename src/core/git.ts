@@ -46,6 +46,19 @@ export async function commitAll(
   return true;
 }
 
+/** The current HEAD sha of a repo (empty string on failure). */
+export async function currentSha(repoDir: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repoDir,
+      timeout: 5000,
+    });
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
 /** Number of commits on the current branch ahead of the base commit. */
 export async function commitsSince(
   repoDir: string,
