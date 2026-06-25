@@ -41,7 +41,10 @@ const app = Fastify({ logger: true });
 app.addContentTypeParser(
   "application/json",
   { parseAs: "string" },
-  (_req, body, done) => {
+  (req, body, done) => {
+    // Stash the raw body so the GitHub webhook route can verify its HMAC over
+    // the exact bytes (see routes/github-webhook.ts).
+    (req as any).rawBody = body;
     if (!body || (body as string).trim() === "") {
       done(null, undefined);
       return;
