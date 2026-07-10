@@ -15,13 +15,17 @@ import tasksRoute from "./routes/tasks.js";
 import schedulesRoute from "./routes/schedules.js";
 import githubWebhookRoute from "./routes/github-webhook.js";
 import { validateToken, hasAnyToken } from "./auth.js";
-import { initStore } from "./core/store.js";
+import { initStore, reconcileOrphanedTasks } from "./core/store.js";
 import { startScheduler } from "./core/scheduler.js";
 
 dotenv.config();
 
 // Open the durable task store (creates the SQLite schema on first run).
 initStore();
+const orphaned = reconcileOrphanedTasks();
+if (orphaned > 0) {
+  console.warn(`Reconciled ${orphaned} orphaned task(s) left running by a previous process.`);
+}
 // Start the recurring-task scheduler (minute resolution).
 startScheduler();
 

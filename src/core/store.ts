@@ -247,6 +247,16 @@ export function updateTask(id: string, patch: Partial<Task>): Task | null {
   return getTask(id);
 }
 
+/** Mark tasks left in a non-terminal state by a crash/restart as failed. */
+export function reconcileOrphanedTasks(): number {
+  const result = getDb()
+    .prepare(
+      "UPDATE tasks SET status = 'failed', error = 'Server restarted while task was in progress', finished_at = ? WHERE status IN ('running', 'review', 'verifying')"
+    )
+    .run(Date.now());
+  return Number(result.changes);
+}
+
 /** Fetch a single task by id. */
 export function getTask(id: string): Task | null {
   const row = getDb()

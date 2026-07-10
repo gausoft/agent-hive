@@ -9,6 +9,7 @@ import {
   listTasks,
   appendEvent,
   getEvents,
+  reconcileOrphanedTasks,
 } from "../core/store.js";
 
 before(() => initStore(":memory:"));
@@ -76,4 +77,18 @@ test("appendEvent + getEvents preserve order and JSON payloads", () => {
   const tail = getEvents(task.id, { afterId: events[1].id });
   assert.equal(tail.length, 1);
   assert.equal(tail[0].id, e3.id);
+});
+
+test("reconcileOrphanedTasks fails running/review/verifying, leaves terminal states", () => {
+  const t1 = createTask({ prompt: "a" });
+  const t2 = createTask({ prompt: "b" });
+  const t3 = createTask({ prompt: "c" });
+  updateTask(t1.id, { status: "running" });
+  updateTask(t2.id, { status: "verifying" });
+  updateTask(t3.id, { status: "done" });
+  const n = reconcileOrphanedTasks();
+  assert.ok(n >= 2); // other tests may leave non-terminal tasks in the shared DB
+  assert.equal(getTask(t1.id)?.status, "failed");
+  assert.equal(getTask(t2.id)?.status, "failed");
+  assert.equal(getTask(t3.id)?.status, "done");
 });
