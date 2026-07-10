@@ -9,6 +9,10 @@
 import { HiveAgentProxy } from "./hive-agent.js";
 import { GitHubPanel } from "./github-panel.js";
 import { BoardPanel } from "./board.js";
+import { registerComponents } from "./components.js";
+import { icons } from "./icons.js";
+
+registerComponents();
 
 const STORAGE_KEY = "hive_token";
 
@@ -140,7 +144,7 @@ function handleChatKey(e: KeyboardEvent) {
 // ---- Tabs ----
 function switchTab(tab: string) {
   currentTab = tab;
-  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.tab === tab));
+  document.querySelectorAll(".rail-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.tab === tab));
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", (p as HTMLElement).dataset.tab === tab));
   if (tab === "github" && ghPanel) { ghPanel.refresh(); }
   if (boardPanel) { tab === "board" ? boardPanel.start() : boardPanel.stop(); }
@@ -151,12 +155,16 @@ function renderTokenGate() {
   ($("app")!).innerHTML = `
     <div class="token-gate">
       <div class="token-gate-inner">
-        <h2>🐝 Agent Hive</h2>
-        <p>Enter your API token to continue</p>
-        <input type="password" id="tokenInput" placeholder="hive_token_..." autofocus
-               onkeydown="if(event.key==='Enter')window._login()">
-        <button onclick="window._login()">Connect</button>
-        <div class="token-error" id="tokenError">Invalid token</div>
+        <div class="hero">
+          <hive-orb size="120"></hive-orb>
+          <h2>Agent Hive</h2>
+        </div>
+        <div class="token-gate-form">
+          <input type="password" id="tokenInput" placeholder="hive_token_…" autofocus
+                 onkeydown="if(event.key==='Enter')window._login()">
+          <hive-button variant="solid" full onclick="window._login()">Connect</hive-button>
+          <div class="token-error" id="tokenError">Invalid token</div>
+        </div>
       </div>
     </div>`;
   (window as any)._login = doLogin;
@@ -176,48 +184,46 @@ async function renderApp() {
   (window as any)._logout = doLogout;
 
   const app = $("app")!;
+  const initial = (user?.name || "U").trim().slice(0, 1).toUpperCase();
   app.innerHTML = `
-    <!-- Header -->
-    <div class="header">
-      <div class="header-left">
-        <h1>🐝 <span>Agent Hive</span></h1>
-        <div class="tabs">
-          <button class="tab-btn active" data-tab="chat" onclick="_switchTab('chat')">💬 Chat</button>
-          <button class="tab-btn" data-tab="github" onclick="_switchTab('github')">🐙 GitHub</button>
-          <button class="tab-btn" data-tab="board" onclick="_switchTab('board')">📋 Board</button>
-        </div>
-      </div>
-      <div class="header-right">
-        <span class="user-badge">${user?.name || "User"}</span>
-        <button class="btn-logout" onclick="_logout()">Logout</button>
-      </div>
-    </div>
-
-    <!-- Main -->
-    <div class="main">
+    <div class="shell">
+      <nav class="rail">
+        <div class="rail-brand" title="Agent Hive"></div>
+        <button class="rail-btn active" data-tab="chat" title="Chat" onclick="_switchTab('chat')">${icons.chat(20)}</button>
+        <button class="rail-btn" data-tab="github" title="GitHub" onclick="_switchTab('github')">${icons.github(20)}</button>
+        <button class="rail-btn" data-tab="board" title="Board" onclick="_switchTab('board')">${icons.board(20)}</button>
+        <div class="rail-spacer"></div>
+        <div class="rail-avatar" title="${user?.name || "User"}">${initial}</div>
+        <button class="rail-logout" title="Logout" onclick="_logout()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg></button>
+      </nav>
+      <div class="workarea">
+      <div class="main">
       <!-- Chat Tab -->
       <div class="tab-panel active" data-tab="chat" id="chatPanel">
-        <div class="chat-area" id="chatMessages"></div>
+        <div class="chat-area">
+          <div class="chat-empty"><hive-orb size="76"></hive-orb><p>Ask anything, or dispatch an agent to a repo.</p></div>
+          <div id="chatMessages"></div>
+        </div>
         <div class="chat-input-bar">
           <div class="chat-controls">
-            <select id="modelSelect" class="mini-select">
+            <hive-select id="modelSelect">
               <option value="">Model: Default</option>
               <option value="deepseek-chat">DeepSeek Chat</option>
               <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
               <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4</option>
-            </select>
-            <select id="thinkingSelect" class="mini-select">
+            </hive-select>
+            <hive-select id="thinkingSelect">
               <option value="">Thinking: Auto</option>
               <option value="off">Off</option>
               <option value="minimal">Minimal</option>
               <option value="low">Low</option>
               <option value="medium">Medium</option>
-            </select>
+            </hive-select>
           </div>
           <div class="chat-input-row">
             <textarea id="chatInput" placeholder="Send a message... (Enter to send, Shift+Enter for new line)"
                       onkeydown="window._chatKey(event)" rows="1"></textarea>
-            <button id="sendBtn" onclick="_sendChat()">Send</button>
+            <hive-button variant="solid" id="sendBtn" onclick="_sendChat()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg> Send</hive-button>
           </div>
         </div>
       </div>
@@ -240,7 +246,7 @@ async function renderApp() {
             </div>
             <div class="gh-repo-list" id="repoList"></div>
             <div class="gh-actions" id="ghActions">
-              <button onclick="_ghPanel.refresh()">🔄 Refresh</button>
+              <button onclick="_ghPanel.refresh()">${icons.refresh(14)} Refresh</button>
             </div>
           </div>
           <div class="gh-main">
@@ -266,6 +272,8 @@ async function renderApp() {
               <button class="confirm" onclick="_ghPanel.confirmPush()">Push</button>
             </div>
           </div>
+        </div>
+      </div>
         </div>
       </div>
     </div>`;

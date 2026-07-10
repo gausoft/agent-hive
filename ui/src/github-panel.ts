@@ -2,6 +2,8 @@
  * GitHub Panel — repo browser with clone, fork, branch, commit, push.
  * Ported from the existing vanilla JS panel, converted to TypeScript.
  */
+import { icons } from "./icons.js";
+import { toast, confirmDialog, promptDialog } from "./dialogs.js";
 
 interface Repo {
   name: string;
@@ -159,7 +161,7 @@ export class GitHubPanel {
       const logEl = document.getElementById("ghLog");
 
       if (!res.ok || data.error) {
-        if (actionsEl) actionsEl.innerHTML = `<button onclick="window._ghPanel.cloneRepo('${name}')">📥 Clone</button>`;
+        if (actionsEl) actionsEl.innerHTML = `<button onclick="window._ghPanel.cloneRepo('${name}')">${icons.clone(14)} Clone</button>`;
         if (branchEl) branchEl.textContent = "";
         if (statusEl) statusEl.textContent = "Not cloned";
         if (filesEl) filesEl.innerHTML = '<div class="gh-empty">Clone this repo to get started</div>';
@@ -172,10 +174,10 @@ export class GitHubPanel {
       if (statusEl) statusEl.textContent = changes > 0 ? `${changes} change(s)` : "Clean";
       if (actionsEl) {
         actionsEl.innerHTML = `
-          <button onclick="window._ghPanel.pullRepo('${name}')">📥 Pull</button>
-          <button onclick="window._ghPanel.newBranch('${name}')">🌿 Branch</button>
-          <button onclick="window._ghPanel.openCommitModal('${name}')">📤 Push</button>
-          <button onclick="window._ghPanel.refreshStatus('${name}')">🔄</button>
+          <button onclick="window._ghPanel.pullRepo('${name}')">${icons.pull(14)} Pull</button>
+          <button onclick="window._ghPanel.newBranch('${name}')">${icons.branch(14)} Branch</button>
+          <button onclick="window._ghPanel.openCommitModal('${name}')">${icons.push(14)} Push</button>
+          <button onclick="window._ghPanel.refreshStatus('${name}')" title="Refresh">${icons.refresh(14)}</button>
         `;
       }
       if (data.recentCommits && data.recentCommits[0] && logEl) {
@@ -201,14 +203,14 @@ export class GitHubPanel {
       if (path) {
         const back = document.createElement("div");
         back.className = "gh-file";
-        back.innerHTML = '<span class="icon dir">📁</span> ..';
+        back.innerHTML = `<span class="icon dir">${icons.up(16)}</span> ..`;
         back.onclick = () => this.loadFiles(name, path.split("/").slice(0, -1).join("/"));
         filesEl.appendChild(back);
       }
       (data.files as FileEntry[]).forEach((f) => {
         const div = document.createElement("div");
         div.className = "gh-file";
-        const icon = f.type === "dir" ? "📁" : this.getFileIcon(f.name);
+        const icon = f.type === "dir" ? icons.folder(16) : icons.file(16);
         const iconClass = f.type === "dir" ? "dir" : "file";
         const size = f.type === "file" ? this.formatSize(f.size || 0) : "";
         div.innerHTML = `<span class="icon ${iconClass}">${icon}</span> ${f.name} <span class="size">${size}</span>`;
@@ -220,16 +222,6 @@ export class GitHubPanel {
     } catch (e) {
       console.error("loadFiles error:", e);
     }
-  }
-
-  private getFileIcon(name: string): string {
-    const ext = name.split(".").pop()?.toLowerCase() || "";
-    const icons: Record<string, string> = {
-      ts: "🔷", js: "📜", json: "📋", md: "📝", py: "🐍",
-      html: "🌐", css: "🎨", sh: "⚡", yml: "⚙️", yaml: "⚙️",
-      toml: "⚙️", sql: "🗃️",
-    };
-    return icons[ext] || "📄";
   }
 
   private formatSize(b: number): string {
@@ -251,7 +243,7 @@ export class GitHubPanel {
       this.loadRepoStatus(name);
       this.loadFiles(name);
     } else {
-      alert("Clone failed: " + data.error);
+      toast("Clone failed: " + data.error, "error");
     }
   }
 
@@ -265,12 +257,12 @@ export class GitHubPanel {
       this.loadRepoStatus(name);
       this.loadFiles(name);
     } else {
-      alert("Pull failed: " + data.error);
+      toast("Pull failed: " + data.error, "error");
     }
   }
 
   async newBranch(name: string): Promise<void> {
-    const branch = prompt("New branch name:");
+    const branch = await promptDialog("New branch", "branch name");
     if (!branch) return;
     const res = await this.api("/api/github/branch", {
       method: "POST",
@@ -280,7 +272,7 @@ export class GitHubPanel {
     if (res.ok) {
       this.loadRepoStatus(name);
     } else {
-      alert("Branch failed: " + data.error);
+      toast("Branch failed: " + data.error, "error");
     }
   }
 
@@ -307,7 +299,7 @@ export class GitHubPanel {
     if (res.ok) {
       this.loadRepoStatus(this.pushTarget);
     } else {
-      alert("Push failed: " + data.error);
+      toast("Push failed: " + data.error, "error");
     }
   }
 
@@ -318,7 +310,7 @@ export class GitHubPanel {
 
   private async forkAndClone(fullName: string): Promise<void> {
     const name = fullName.split("/").pop() || fullName;
-    if (confirm(`Fork ${fullName} and clone?`)) {
+    if (await confirmDialog(`Fork ${fullName} and clone?`, "Fork")) {
       try {
         const res = await this.api("/api/github/fork", {
           method: "POST",
@@ -329,10 +321,10 @@ export class GitHubPanel {
           await this.refresh();
           setTimeout(() => this.selectRepo(name), 1000);
         } else {
-          alert("Fork failed: " + data.error);
+          toast("Fork failed: " + data.error, "error");
         }
       } catch (e: any) {
-        alert("Error: " + e.message);
+        toast("Error: " + e.message, "error");
       }
     }
   }

@@ -1,47 +1,27 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
+import { resolve } from 'node:path';
 
-export default defineConfig({
-  base: '/ui/',
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-  },
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/prompt': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/status': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/messages': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/abort': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/events': {
-        target: 'ws://localhost:8080',
-        changeOrigin: true,
-        ws: true,
-      },
-      '/health': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/system-prompt': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
+// Proxy target follows the server PORT from the repo-root .env (falls back to 8080).
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, resolve(__dirname, '..'), '');
+  const http = `http://localhost:${env.PORT || 8080}`;
+  const ws = `ws://localhost:${env.PORT || 8080}`;
+  const p = (target: string, opts: object = {}) => ({ target, changeOrigin: true, ...opts });
+  return {
+    base: '/ui/',
+    build: { outDir: 'dist', emptyOutDir: true },
+    server: {
+      port: 5173,
+      proxy: {
+        '/api': p(http),
+        '/prompt': p(http),
+        '/status': p(http),
+        '/messages': p(http),
+        '/abort': p(http),
+        '/events': p(ws, { ws: true }),
+        '/health': p(http),
+        '/system-prompt': p(http),
       },
     },
-  },
+  };
 });

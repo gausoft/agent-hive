@@ -49,6 +49,16 @@ function esc(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
+const TONE: Record<string, string> = {
+  queued: "neutral",
+  running: "amber",
+  review: "purple",
+  done: "green",
+  failed: "red",
+  aborted: "red",
+};
+const toneFor = (status: string) => TONE[status] || "neutral";
+
 export class BoardPanel {
   private token: string;
   private serverUrl: string;
@@ -157,12 +167,12 @@ export class BoardPanel {
 
   private card(t: Task): string {
     const title = t.repo ? esc(t.repo) : "no repo";
-    const pr = t.prUrl ? ' <span class="pill pr">PR</span>' : "";
+    const pr = t.prUrl ? ' <hive-pill tone="green">PR</hive-pill>' : "";
     return `
       <div class="board-card status-${t.status}" data-id="${t.id}">
         <div class="board-card-top">
           <span class="mono">${t.id.slice(0, 8)}</span>
-          <span class="pill">${t.status}</span>${pr}
+          <hive-pill tone="${toneFor(t.status)}">${t.status}</hive-pill>${pr}
         </div>
         <div class="board-card-repo">${title}</div>
         <div class="board-card-prompt">${esc(t.prompt.slice(0, 100))}</div>
@@ -185,7 +195,7 @@ export class BoardPanel {
     detail.innerHTML = `
       <div class="bd-head">
         <button id="bdBack">&larr; Board</button>
-        <span class="pill">${t.status}</span>
+        <hive-pill tone="${toneFor(t.status)}">${t.status}</hive-pill>
         ${t.prUrl ? `<a class="bd-pr" href="${t.prUrl}" target="_blank" rel="noreferrer">Open PR &nearr;</a>` : ""}
         ${canAbort ? `<button id="bdAbort" class="bd-abort">Abort</button>` : ""}
       </div>
