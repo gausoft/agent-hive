@@ -27,6 +27,8 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/ui/dist ./ui/dist
 COPY public ./public
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Durable store + workspace
 ENV HIVE_DB_PATH=/data/hive.db \
@@ -41,4 +43,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -fsS http://localhost:8080/health || exit 1
 
-CMD ["node", "dist/index.js"]
+CMD ["/docker-entrypoint.sh"]

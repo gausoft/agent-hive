@@ -271,8 +271,10 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
         taskPrompt: task.prompt,
         diff: iterDiff,
         verifyCommand: task.verifyCommand,
-        provider: resolveProvider(task.provider ?? undefined),
-        reviewModel: opts.reviewModel,
+        provider: resolveProvider(
+          process.env.HIVE_REVIEW_PROVIDER || task.provider || undefined
+        ),
+        reviewModel: opts.reviewModel || process.env.HIVE_REVIEW_MODEL,
       });
       updateTask(taskId, { verdict: result.verdict });
       record(taskId, "verify", { iteration, ...result });
