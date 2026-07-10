@@ -14,6 +14,10 @@ export const PROVIDER_CONFIGS: Record<
     envKey: "OPENROUTER_API_KEY",
     baseUrl: "https://openrouter.ai/api/v1",
   },
+  "opencode-go": {
+    envKey: "OPENCODE_GO_API_KEY",
+    baseUrl: "https://opencode.ai/zen/go/v1",
+  },
   zai: { envKey: "ZAI_CODE", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
   deepseek: {
     envKey: "DEEPSEEK_API_KEY",
@@ -29,6 +33,7 @@ export function resolveProvider(explicit?: string): string {
   return (
     explicit ||
     process.env.DEFAULT_PROVIDER ||
+    (process.env.OPENCODE_GO_API_KEY ? "opencode-go" : undefined) ||
     (process.env.ZAI_CODE ? "zai" : undefined) ||
     (process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined) ||
     (process.env.OPENROUTER_API_KEY ? "openrouter" : undefined) ||
