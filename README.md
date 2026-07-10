@@ -25,6 +25,15 @@ npm start
 
 Open the board at `http://localhost:8080/ui/` and log in with your `API_TOKEN`.
 
+## Self-hosting requirements
+
+- **Node.js >= 22.5**
+- **git** on `PATH`
+- **[gh](https://cli.github.com/) CLI**, authenticated (`gh auth login`) — used to push branches and open PRs
+- A **GitHub token with `repo` scope** (for PRs, webhook preview URLs, and cloning private repos)
+
+Optional: per-repo SSH deploy keys instead of `gh` for private-repo access.
+
 ## Surfaces
 
 One core, four ways to drive it — all reading the same durable store:
