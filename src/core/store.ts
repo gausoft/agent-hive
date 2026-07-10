@@ -83,7 +83,14 @@ export function initStore(
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
   // Migrations for stores created before these columns existed (idempotent).
-  for (const col of ["head_sha TEXT", "preview_url TEXT"]) {
+  for (const col of [
+    "head_sha TEXT",
+    "preview_url TEXT",
+    "verify_command TEXT",
+    "max_iterations INTEGER NOT NULL DEFAULT 1",
+    "iterations INTEGER NOT NULL DEFAULT 0",
+    "verdict TEXT",
+  ]) {
     try {
       db.exec(`ALTER TABLE tasks ADD COLUMN ${col}`);
     } catch {
@@ -117,6 +124,10 @@ interface TaskRow {
   pr_url: string | null;
   preview_url: string | null;
   error: string | null;
+  verify_command: string | null;
+  max_iterations: number;
+  iterations: number;
+  verdict: string | null;
   created_at: number;
   started_at: number | null;
   finished_at: number | null;
@@ -137,6 +148,10 @@ function rowToTask(row: TaskRow): Task {
     prUrl: row.pr_url,
     previewUrl: row.preview_url,
     error: row.error,
+    verifyCommand: row.verify_command,
+    maxIterations: row.max_iterations ?? 1,
+    iterations: row.iterations ?? 0,
+    verdict: row.verdict,
     createdAt: row.created_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
@@ -159,6 +174,10 @@ export function createTask(input: TaskInput): Task {
     prUrl: null,
     previewUrl: null,
     error: null,
+    verifyCommand: input.verifyCommand ?? null,
+    maxIterations: input.maxIterations ?? 1,
+    iterations: 0,
+    verdict: null,
     createdAt: Date.now(),
     startedAt: null,
     finishedAt: null,
@@ -167,8 +186,8 @@ export function createTask(input: TaskInput): Task {
   getDb()
     .prepare(
       `INSERT INTO tasks
-        (id, repo, branch, prompt, model, provider, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, repo, branch, prompt, model, provider, status, verify_command, max_iterations, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       task.id,
@@ -178,6 +197,8 @@ export function createTask(input: TaskInput): Task {
       task.model,
       task.provider,
       task.status,
+      task.verifyCommand,
+      task.maxIterations,
       task.createdAt
     );
 
@@ -196,6 +217,10 @@ const UPDATABLE: Record<string, keyof Task> = {
   pr_url: "prUrl",
   preview_url: "previewUrl",
   error: "error",
+  verify_command: "verifyCommand",
+  max_iterations: "maxIterations",
+  iterations: "iterations",
+  verdict: "verdict",
   started_at: "startedAt",
   finished_at: "finishedAt",
 };

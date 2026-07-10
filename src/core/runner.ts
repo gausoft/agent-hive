@@ -7,7 +7,9 @@
  * restart. It also fans out every pi event to an in-process bus keyed by task
  * id, so surfaces can stream live without polling.
  *
- * State machine: queued -> running -> [review] -> done | failed.
+ * State machine: queued -> running -> [review] -> [verifying] -> done | failed.
+ * When a task has maxIterations > 1, a failed verification feeds the verifier's
+ * feedback back to the maker session and re-runs — the maker is never the grader.
  */
 
 import { execFile } from "node:child_process";
@@ -17,6 +19,7 @@ import { rmSync } from "node:fs";
 import { createManagedSession, getSession } from "../sessions/manager.js";
 import { resolveProvider } from "./providers.js";
 import { runCodeReview } from "../loops/review.js";
+import { verifyTask } from "../loops/verify.js";
 import {
   taskBranchName,
   createBranch,
@@ -67,7 +70,7 @@ const aborting = new Set<string>();
  */
 export async function abortTask(taskId: string): Promise<boolean> {
   const task = getTask(taskId);
-  if (!task || (task.status !== "running" && task.status !== "review")) {
+  if (!task || (task.status !== "running" && task.status !== "review" && task.status !== "verifying")) {
     return false;
   }
   aborting.add(taskId);
@@ -231,11 +234,59 @@ export async function runTask(taskId: string, opts: RunOptions = {}): Promise<vo
       : "";
     const fullPrompt = systemPrompt + "\n\n" + prefix + task.prompt;
 
-    try {
-      await managed.session.prompt(fullPrompt);
-    } finally {
-      unsubscribe();
+    // ── Maker → verifier loop ──
+    // Iteration 1 runs the task prompt; on a failed verification, subsequent
+    // iterations re-prompt the SAME maker session with the verifier's feedback.
+    const maxIterations = Math.max(1, task.maxIterations ?? 1);
+    let iteration = 0;
+    let prompt = fullPrompt;
+
+    for (;;) {
+      iteration++;
+      updateTask(taskId, { iterations: iteration });
+
+      try {
+        await managed.session.prompt(prompt);
+      } catch (err) {
+        unsubscribe();
+        throw err;
+      }
+
+      // Verification requires a repo diff to judge; snippet tasks skip the loop.
+      if (!repoDir || !baseSha) break;
+
+      updateTask(taskId, { status: "verifying" });
+      record(taskId, "status", { status: "verifying" });
+
+      const iterDiff = await captureDiff(repoDir, baseSha);
+      const result = await verifyTask({
+        repoDir,
+        taskPrompt: task.prompt,
+        diff: iterDiff,
+        verifyCommand: task.verifyCommand,
+        provider: resolveProvider(task.provider ?? undefined),
+        reviewModel: opts.reviewModel,
+      });
+      updateTask(taskId, { verdict: result.verdict });
+      record(taskId, "verify", { iteration, ...result });
+
+      if (result.verdict === "pass") break;
+      if (iteration >= maxIterations) {
+        unsubscribe();
+        throw new Error(
+          `Verification failed after ${iteration} iteration(s): ${result.feedback.slice(0, 500)}`
+        );
+      }
+
+      updateTask(taskId, { status: "running" });
+      record(taskId, "status", { status: "running", iteration: iteration + 1 });
+      prompt =
+        "An independent verifier reviewed your work and FAILED it. Fix the problems below, " +
+        "then commit your fixes.\n\nVerifier feedback:\n" +
+        result.feedback;
     }
+
+    unsubscribe();
 
     // Optional diff-based review cycles (repos with a base commit only)
     const reviewCycles = opts.reviewCycles ?? 0;

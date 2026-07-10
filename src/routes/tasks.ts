@@ -19,6 +19,10 @@ interface CreateTaskBody {
   reviewCycles?: number;
   reviewModel?: string;
   systemPromptOverride?: string;
+  /** Shell command whose exit code verifies the work (e.g. "npm test"). */
+  verifyCommand?: string;
+  /** Max maker→verifier iterations (default 1; >1 enables the retry loop). */
+  maxIterations?: number;
 }
 
 export default async function tasksRoute(app: FastifyInstance) {
@@ -35,6 +39,8 @@ export default async function tasksRoute(app: FastifyInstance) {
       branch: body.branch ?? null,
       model: body.model ?? null,
       provider: body.provider ?? null,
+      verifyCommand: body.verifyCommand ?? null,
+      maxIterations: body.maxIterations,
     });
 
     void runTask(task.id, {

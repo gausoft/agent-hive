@@ -4,6 +4,7 @@ export type TaskStatus =
   | "queued"
   | "running"
   | "review"
+  | "verifying"
   | "done"
   | "failed"
   | "aborted";
@@ -24,6 +25,14 @@ export interface Task {
   /** Preview URL published by the deploy platform for the PR/commit (if any). */
   previewUrl: string | null;
   error: string | null;
+  /** Shell command whose exit code objectively verifies the work (e.g. "npm test"). */
+  verifyCommand: string | null;
+  /** Max maker→verifier iterations before giving up (default 1 = no retry). */
+  maxIterations: number;
+  /** Iterations actually consumed. */
+  iterations: number;
+  /** Final verdict: "pass" | "fail" | null (not verified). */
+  verdict: string | null;
   createdAt: number;
   startedAt: number | null;
   finishedAt: number | null;
@@ -35,6 +44,8 @@ export interface TaskInput {
   prompt: string;
   model?: string | null;
   provider?: string | null;
+  verifyCommand?: string | null;
+  maxIterations?: number;
 }
 
 /** A single recorded event in a task's timeline (durable, survives restarts). */
