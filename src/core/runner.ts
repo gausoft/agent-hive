@@ -100,6 +100,13 @@ function safeName(name: string): string {
 
 function toSshUrl(repoUrl: string): string {
   const match = repoUrl.match(/https?:\/\/github\.com\/([^/]+\/[^/]+)/);
+  // With a GH_TOKEN (server deployments), clone over authenticated HTTPS instead
+  // of requiring an SSH key in the container. gh/git both honor this URL form.
+  if (match && process.env.GH_TOKEN) {
+    let path = match[1];
+    if (!path.endsWith(".git")) path += ".git";
+    return `https://x-access-token:${process.env.GH_TOKEN}@github.com/${path}`;
+  }
   if (match) {
     let path = match[1];
     if (!path.endsWith(".git")) path += ".git";
