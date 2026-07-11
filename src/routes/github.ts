@@ -35,6 +35,15 @@ function safeName(name: string): string {
   return base;
 }
 
+/** Accepts "repo" or "owner/repo" (GitHub slug); returns the safe directory name. */
+function safeRepoDirName(repo: string): string {
+  const parts = repo.split("/");
+  if (parts.length > 2 || parts.some((p) => !p)) {
+    throw new Error(`Invalid repo: ${repo}`);
+  }
+  return safeName(parts[parts.length - 1].replace(/\.git$/, ""));
+}
+
 // Sanitize path relative to workspace
 function safePath(p: string): string {
   const resolved = resolve(WORKSPACE, p);
@@ -68,7 +77,12 @@ export default async function githubRoute(app: FastifyInstance) {
     const body = req.body as { repo?: string; branch?: string };
     if (!body.repo) return reply.code(400).send({ error: "repo is required" });
 
-    const repoName = safeName(body.repo);
+    let repoName: string;
+    try {
+      repoName = safeRepoDirName(body.repo);
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message });
+    }
     const targetDir = join(WORKSPACE, repoName);
 
     if (existsSync(targetDir)) {
@@ -92,7 +106,7 @@ export default async function githubRoute(app: FastifyInstance) {
     const body = req.body as { repo?: string };
     if (!body.repo) return reply.code(400).send({ error: "repo is required" });
 
-    const repoName = safeName(body.repo);
+    const repoName = safeRepoDirName(body.repo);
     const targetDir = safePath(repoName);
 
     if (!existsSync(targetDir)) {
@@ -113,7 +127,7 @@ export default async function githubRoute(app: FastifyInstance) {
     if (!body.repo || !body.branch)
       return reply.code(400).send({ error: "repo and branch are required" });
 
-    const repoName = safeName(body.repo);
+    const repoName = safeRepoDirName(body.repo);
     const targetDir = safePath(repoName);
 
     if (!existsSync(targetDir)) {
@@ -137,7 +151,7 @@ export default async function githubRoute(app: FastifyInstance) {
     if (!body.repo)
       return reply.code(400).send({ error: "repo is required" });
 
-    const repoName = safeName(body.repo);
+    const repoName = safeRepoDirName(body.repo);
     const targetDir = safePath(repoName);
 
     if (!existsSync(targetDir)) {
